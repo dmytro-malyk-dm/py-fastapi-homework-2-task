@@ -253,10 +253,12 @@ async def create_movie(
     country = country_result.scalar_one_or_none()
 
     if country is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Country with code '{movie_data.country}' not found."
+        country = CountryModel(
+            code=movie_data.country,
+            name=None
         )
+        db.add(country)
+        await db.flush()
 
     genres = []
     for genre_name in movie_data.genres:
