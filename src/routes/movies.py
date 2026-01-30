@@ -1,4 +1,5 @@
 from math import ceil
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -14,7 +15,6 @@ from schemas.movies import (
     MovieUpdateSchema,
     MessageResponseSchema
 )
-
 
 router = APIRouter()
 
@@ -89,14 +89,6 @@ async def get_movie_by_id(
     """
     Get detailed information about a specific movie by ID.
 
-    Includes all relationships:
-    - Country
-    - Genres
-    - Actors
-    - Languages
-
-    - **movie_id**: The ID of the movie to retrieve
-
     Returns:
     - Detailed movie information with all relationships
 
@@ -150,18 +142,15 @@ async def delete_movie(
       - movies_languages
     - Genres, actors, and languages themselves are NOT deleted
     """
-
     query = select(MovieModel).where(MovieModel.id == movie_id)
     result = await db.execute(query)
     movie = result.scalar_one_or_none()
-
 
     if movie is None:
         raise HTTPException(
             status_code=404,
             detail="Movie with the given ID was not found."
         )
-
 
     await db.delete(movie)
     await db.commit()
@@ -207,7 +196,6 @@ async def update_movie(
             detail="Movie with the given ID was not found."
         )
 
-
     update_data = movie_data.model_dump(exclude_unset=True)
 
     if not update_data:
@@ -216,13 +204,11 @@ async def update_movie(
     for field, value in update_data.items():
         setattr(movie, field, value)
 
-
     try:
         await db.commit()
         await db.refresh(movie)
-    except IntegrityError as e:
+    except IntegrityError:
         await db.rollback()
-
         raise HTTPException(
             status_code=400,
             detail="Invalid input data."
@@ -239,82 +225,77 @@ async def create_movie(
     """
     Create a new movie with relationships.
 
-    - **movie_data**: Movie data including IDs for relationships
+    Accepts names/codes for related entities and finds or creates them:
+    - country: Country code (e.g., "US")
+    - genres: List of genre names
+    - actors: List of actor names
+    - languages: List of language names
+
+    - **movie_data**: Movie data including names/codes for relationships
 
     Returns:
     - 201 Created: Detailed movie information with all relationships
 
     Raises:
-    - 404: If any of the provided IDs (country_id, genre_ids, actor_ids, language_ids) do not exist
-    - 400: If invalid input data (e.g., duplicate name+date)
+    - 404: If country code does not exist
+    - 409: If movie with same name and date already exists
+    - 400: If invalid input data
 
     Validation:
     - score: 0-100
     - budget, revenue: >= 0
-    - All ID lists: minimum 1 element
+    - date: not more than 1 year in future
     - name+date: must be unique
     """
 
-
-    country_query = select(CountryModel).where(CountryModel.id == movie_data.country_id)
+    country_query = select(CountryModel).where(CountryModel.code == movie_data.country)
     country_result = await db.execute(country_query)
     country = country_result.scalar_one_or_none()
 
     if country is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Country with ID {movie_data.country_id} not found."
+            detail=f"Country with code '{movie_data.country}' not found."
         )
 
+    genres = []
+    for genre_name in movie_data.genres:
+        genre_query = select(GenreModel).where(GenreModel.name == genre_name)
+        genre_result = await db.execute(genre_query)
+        genre = genre_result.scalar_one_or_none()
 
-    genres_query = select(
-        GenreModel
-    ).where(
-        GenreModel.id.in_(movie_data.genre_ids)
-    )
-    genres_result = await db.execute(genres_query)
-    genres = genres_result.scalars().all()
+        if genre is None:
+            genre = GenreModel(name=genre_name)
+            db.add(genre)
+            await db.flush()
 
-    if len(genres) != len(movie_data.genre_ids):
-        found_ids = {genre.id for genre in genres}
-        missing_ids = set(movie_data.genre_ids) - found_ids
-        raise HTTPException(
-            status_code=404,
-            detail=f"Genres with IDs {missing_ids} not found."
-        )
+        genres.append(genre)
 
-    actors_query = select(
-        ActorModel
-    ).where(
-        ActorModel.id.in_(movie_data.actor_ids)
-    )
-    actors_result = await db.execute(actors_query)
-    actors = actors_result.scalars().all()
+    actors = []
+    for actor_name in movie_data.actors:
+        actor_query = select(ActorModel).where(ActorModel.name == actor_name)
+        actor_result = await db.execute(actor_query)
+        actor = actor_result.scalar_one_or_none()
 
-    if len(actors) != len(movie_data.actor_ids):
-        found_ids = {actor.id for actor in actors}
-        missing_ids = set(movie_data.actor_ids) - found_ids
-        raise HTTPException(
-            status_code=404,
-            detail=f"Actors with IDs {missing_ids} not found."
-        )
+        if actor is None:
+            actor = ActorModel(name=actor_name)
+            db.add(actor)
+            await db.flush()
 
+        actors.append(actor)
 
-    languages_query = select(
-        LanguageModel
-    ).where(
-        LanguageModel.id.in_(movie_data.language_ids)
-    )
-    languages_result = await db.execute(languages_query)
-    languages = languages_result.scalars().all()
+    languages = []
+    for language_name in movie_data.languages:
+        language_query = select(LanguageModel).where(LanguageModel.name == language_name)
+        language_result = await db.execute(language_query)
+        language = language_result.scalar_one_or_none()
 
-    if len(languages) != len(movie_data.language_ids):
-        found_ids = {language.id for language in languages}
-        missing_ids = set(movie_data.language_ids) - found_ids
-        raise HTTPException(
-            status_code=404,
-            detail=f"Languages with IDs {missing_ids} not found."
-        )
+        if language is None:
+            language = LanguageModel(name=language_name)
+            db.add(language)
+            await db.flush()
+
+        languages.append(language)
 
     movie = MovieModel(
         name=movie_data.name,
@@ -324,7 +305,7 @@ async def create_movie(
         status=movie_data.status,
         budget=movie_data.budget,
         revenue=movie_data.revenue,
-        country_id=movie_data.country_id
+        country_id=country.id
     )
 
     movie.genres = genres
@@ -338,10 +319,18 @@ async def create_movie(
         await db.refresh(movie)
     except IntegrityError as e:
         await db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid input data."
-        )
+        error_message = str(e.orig) if hasattr(e, "orig") else str(e)
+        if "unique_movie_constraint" in error_message or "duplicate key" in error_message.lower():
+            raise HTTPException(
+                status_code=409,
+                detail=f"A movie with the name '{movie_data.name}' and "
+                f"release date '{movie_data.date}' already exists."
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid input data."
+            )
 
     query = (
         select(MovieModel)

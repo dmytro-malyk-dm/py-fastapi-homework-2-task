@@ -1,8 +1,8 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Optional
 from enum import Enum
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class MovieStatusEnum(str, Enum):
@@ -52,9 +52,6 @@ class MovieListItemSchema(BaseModel):
     date: date
     score: float
     overview: str
-    status: MovieStatusEnum
-    budget: float
-    revenue: float
 
 
 class MovieDetailSchema(BaseModel):
@@ -85,30 +82,40 @@ class MovieCreateSchema(BaseModel):
     status: MovieStatusEnum
     budget: float = Field(ge=0)
     revenue: float = Field(ge=0)
-    country_id: int = Field(gt=0)
-    genre_ids: list[int] = Field(min_length=1)
-    actor_ids: list[int] = Field(min_length=1)
-    language_ids: list[int] = Field(min_length=1)
+    country: str = Field(min_length=1, max_length=3)  # Country code (e.g., "US")
+    genres: list[str] = Field(min_length=1)  # Genre names
+    actors: list[str] = Field(min_length=1)  # Actor names
+    languages: list[str] = Field(min_length=1)  # Language names
+
+    @field_validator("date")
+    @classmethod
+    def validate_date_not_too_far_future(cls, chek_data: date) -> date:
+        """Validate that date is not more than 1 year in the future"""
+
+        max_future_date = datetime.now().date() + timedelta(days=365)
+        if chek_data > max_future_date:
+            raise ValueError("Date cannot be more than one year in the future")
+        return chek_data
 
 
 class MovieUpdateSchema(BaseModel):
     """Schema for updating a movie (all fields optional)"""
 
-    name: Optional[str] = Field(min_length=1, max_length=255)
-    date: Optional[date]
-    score: Optional[float] = Field(ge=0, le=100)
-    overview: Optional[str] = Field(min_length=1)
-    status: Optional[MovieStatusEnum]
-    budget: Optional[float] = Field(ge=0)
-    revenue: Optional[float] = Field(ge=0)
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    date: Optional[date] = None
+    score: Optional[float] = Field(None, ge=0, le=100)
+    overview: Optional[str] = Field(None, min_length=1)
+    status: Optional[MovieStatusEnum] = None
+    budget: Optional[float] = Field(None, ge=0)
+    revenue: Optional[float] = Field(None, ge=0)
 
 
 class MovieListResponseSchema(BaseModel):
     """Schema for paginated list of movies"""
 
     movies: list[MovieListItemSchema]
-    prev_page: Optional[str]
-    next_page: Optional[str]
+    prev_page: Optional[str] = None
+    next_page: Optional[str] = None
     total_pages: int = Field(ge=0)
     total_items: int = Field(ge=0)
 
